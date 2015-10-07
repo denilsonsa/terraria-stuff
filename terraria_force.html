@@ -261,7 +261,7 @@
           d3.event.sourceEvent.stopPropagation();
         });
 
-      d3.json('terraria_d3_digraph.json?' + (new Date().getTime()), function(error, graph) {
+      d3.json('terraria_d3_digraph.json', function(error, graph) {
         if (error) throw error;
 
         var adjacent = {};
