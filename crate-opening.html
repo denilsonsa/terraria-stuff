@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Terraria - Crate opening simulator</title>
+		<!-- http://www.listjs.com/ -->
+		<!-- https://github.com/javve/list.js/issues/363 -->
+		<script src="javve-list-v1.1.1.min.js" async defer></script>
+		<style>
+			html, body {
+				background: white;
+				color: black;
+				font-family: sans-serif;
+				font-size: 13px;
+			}
+			body {
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				align-items: flex-start;
+			}
+			body > section.input_section {
+				flex: none;
+				width: 14em;
+			}
+			body > section.output_section {
+				flex: 1 1 0;
+				flex: 1 1 content;
+				min-width: 30em;
+				max-width: 50em;
+			}
+			label {
+				display: block;
+			}
+			.crate_input input[type="number"] {
+				width: 4em;
+				text-align: right;
+			}
+
+			input.search {
+				box-sizing: border-box;
+				width: 100%;
+			}
+
+			table {
+				border-collapse: collapse;
+				margin: 0;
+				width: 100%;
+				table-layout: fixed;
+			}
+			thead {
+				background: #666;
+				color: white;
+			}
+			thead th {
+				width: 5em;
+			}
+			thead th.name {
+				width: auto;
+			}
+			tbody > tr:nth-child(odd) {
+				background-color: #DDD;
+				color: black;
+			}
+			tbody > tr:nth-child(even) {
+				background-color: #EEE;
+				color: black;
+			}
+			td {
+				padding: 0.5ex;
+			}
+			td.min,
+			td.avg,
+			td.max,
+			td.sd {
+				text-align: center;
+			}
+			td.name {
+				text-align: left;
+			}
+			td.id {
+				text-align: right;
+			}
+			td.avg {
+				font-weight: bold;
+			}
+
+			th.sort {
+				cursor: pointer;
+				white-space: nowrap;
+			}
+			th.sort:hover {
+				background: #777;
+			}
+			.sort:after {
+				display: inline-block;
+				content: "";
+			}
+			.sort.asc:after {
+				content: "▲";
+			}
+			.sort.desc:after {
+				content: "▼";
+			}
+		</style>
+	</head>
+	<body>
+		<section class="input_section">
+			<form id="input_form">
+				<div id="crate_input_block">
+					<template id="crate_input_template">
+						<label class="crate_input"><input type="number" min="0" value="999"> <span></span></label>
+					</template>
+				</div>
+				<hr>
+				<label class="checkbox"><input type="checkbox" id="hardmode_input"> Hardmode</label>
+				<input type="submit">
+			</form>
+			<p>Inspired by <a href="http://forums.terraria.org/index.php?threads/crates-fishing-for-hardmode-ore.18097/">Bethany spreadsheet</a>. Updated as Terraria version 1.3.0.8.</p>
+			<p>Yeah, I know, it is a bit ugly.</p>
+		</section>
+		<section class="output_section">
+			<input type="search" class="search" placeholder="Filter items 🔍">
+			<table>
+				<thead>
+					<tr>
+						<th class="sort min"      data-sort="min"  title="Minimum amount acquired in the simulation">min</th>
+						<th class="sort avg"      data-sort="avg"  title="Average amount acquired in the simulation">avg</th>
+						<th class="sort max"      data-sort="max"  title="Maximum amount acquired in the simulation">max</th>
+						<th class="sort sd"       data-sort="sd"   title="Standard deviation">sd</th>
+						<th class="sort name asc" data-sort="name">Item</th>
+						<th class="sort id"       data-sort="id"  >id</th>
+					</tr>
+				</thead>
+				<tbody class="list">
+					<tr>
+						<td class="min" ></td>
+						<td class="avg" ></td>
+						<td class="max" ></td>
+						<td class="sd"  ></td>
+						<td class="name"></td>
+						<td class="id"  ></td>
+					</tr>
+				</tbody>
+			</table>
+		</section>
+		<script>
+			'use strict';
+
+			//////////////////////////////////////////////////
+			// Misc. library-style functions
+
+			// https://stackoverflow.com/questions/1374126/how-to-extend-an-existing-javascript-array-with-another-array
+			Array.prototype.extend = function (other_array) {
+				other_array.forEach(function(v) {this.push(v);}, this);
+			}
+
+			// rand(4) -> random integer from {0, 1, 2, 3}
+			// rand(2, 4) -> random integer from {2, 3}
+			function rand(min, max) {
+				if (min === undefined) {
+					throw 'rand() must receive one or two parameters.';
+				}
+				if (max === undefined) {
+					max = min;
+					min = 0;
+				}
+				return Math.floor(Math.random() * (max - min)) + min;
+			}
+
+			// chance(1, 20) -> returns true with 1/20 of chance, and false with 19/20 of chance.
+			function chance(numerator, denominator) {
+				return rand(denominator) < numerator;
+			}
+
+			// pick_one(1, 2, 3) -> returns one of the arguments
+			// pick_one([1, 2, 3]) -> returns one of the elements
+			// pick_one(1) -> if the only argument is not an array, just return it
+			function pick_one() {
+				var items;
+				if (arguments.length > 1) {
+					items = arguments;
+				} else {
+					items = arguments[0];
+					if (!Array.isArray(items)) {
+						return items;
+					}
+				}
+				return items[rand(items.length)];
+			}
+
+			//////////////////////////////////////////////////
+			// Terraria item-related functions.
+
+			function loot(items, qty) {
+				return {
+					'id': pick_one(items),
+					'qty': qty,
+				}
+			}
+
+			// stack_items([ [{}, {}, …], [{}, {}, …], … ]) -> returns [{}, {}, …]
+			// Returns a new array with all duplicate items stacked together.
+			// Preserves the original item order (although it doesn't need to).
+			function stack_items(array_of_arrays_of_items) {
+				var ret = [];
+				var map = {};
+				array_of_arrays_of_items.forEach(function(items) {
+					items.forEach(function(item, index) {
+						if (map[item.id]) {
+							map[item.id].qty += item.qty;
+						} else {
+							map[item.id] = {
+								'id': item.id,
+								'qty': item.qty,
+							};
+							ret.push(map[item.id]);
+						}
+					});
+				});
+				return ret;
+			}
+
+			//////////////////////////////////////////////////
+			// Items and crates.
+
+			var ITEM_ID = {
+				// Some useful Vim commands I used while building this list:
+				// :g/ \(Ore\|Bar\|Potion\|Coin\|Crate\|Bait\)\>/y A
+				// :%s/^\([^\t']\+\)\t\([0-9]\+\)$/'\2': "\1",/
+				// :nmap <F1> yy<c-W>lp<c-W>h
+				'11': "Iron Ore",
+				'12': "Copper Ore",
+				'13': "Gold Ore",
+				'14': "Silver Ore",
+				'19': "Gold Bar",
+				'20': "Copper Bar",
+				'21': "Silver Bar",
+				'22': "Iron Bar",
+				'28': "Lesser Healing Potion",
+				'56': "Demonite Ore",
+				'57': "Demonite Bar",
+				'71': "Copper Coin",
+				'72': "Silver Coin",
+				'73': "Gold Coin",
+				'74': "Platinum Coin",
+				'110': "Lesser Mana Potion",
+				'117': "Meteorite Bar",
+				'175': "Hellstone Bar",
+				'188': "Healing Potion",
+				'189': "Mana Potion",
+				'226': "Lesser Restoration Potion",
+				'227': "Restoration Potion",
+				'288': "Obsidian Skin Potion",
+				'289': "Regeneration Potion",
+				'290': "Swiftness Potion",
+				'291': "Gills Potion",
+				'292': "Ironskin Potion",
+				'293': "Mana Regeneration Potion",
+				'294': "Magic Power Potion",
+				'295': "Featherfall Potion",
+				'296': "Spelunker Potion",
+				'297': "Invisibility Potion",
+				'298': "Shine Potion",
+				'299': "Night Owl Potion",
+				'300': "Battle Potion",
+				'301': "Thorns Potion",
+				'302': "Water Walking Potion",
+				'303': "Archery Potion",
+				'304': "Hunter Potion",
+				'305': "Gravitation Potion",
+				'364': "Cobalt Ore",
+				'365': "Mythril Ore",
+				'366': "Adamantite Ore",
+				'381': "Cobalt Bar",
+				'382': "Mythril Bar",
+				'391': "Adamantite Bar",
+				'499': "Greater Healing Potion",
+				'500': "Greater Mana Potion",
+				'678': "Red Potion",
+				'699': "Tin Ore",
+				'700': "Lead Ore",
+				'701': "Tungsten Ore",
+				'702': "Platinum Ore",
+				'703': "Tin Bar",
+				'704': "Lead Bar",
+				'705': "Tungsten Bar",
+				'706': "Platinum Bar",
+				'855': "Lucky Coin",
+				'880': "Crimtane Ore",
+				'947': "Chlorophyte Ore",
+				'1006': "Chlorophyte Bar",
+				'1104': "Palladium Ore",
+				'1105': "Orichalcum Ore",
+				'1106': "Titanium Ore",
+				'1184': "Palladium Bar",
+				'1191': "Orichalcum Bar",
+				'1198': "Titanium Bar",
+				'1225': "Hallowed Bar",
+				'1257': "Crimtane Bar",
+				'1552': "Shroomite Bar",
+				'1715': "Table Bar",
+				'2209': "Super Mana Potion",
+				'2322': "Mining Potion",
+				'2323': "Heartreach Potion",
+				'2324': "Calming Potion",
+				'2325': "Builder Potion",
+				'2326': "Titan Potion",
+				'2327': "Flipper Potion",
+				'2328': "Summoning Potion",
+				'2329': "Dangersense Potion",
+				'2334': "Wooden Crate",
+				'2335': "Iron Crate",
+				'2336': "Golden Crate",
+				'2344': "Ammo Reservation Potion",
+				'2345': "Lifeforce Potion",
+				'2346': "Endurance Potion",
+				'2347': "Rage Potion",
+				'2348': "Inferno Potion",
+				'2349': "Wrath Potion",
+				'2350': "Recall Potion",
+				'2351': "Teleportation Potion",
+				'2352': "Love Potion",
+				'2353': "Stink Potion",
+				'2354': "Fishing Potion",
+				'2355': "Sonar Potion",
+				'2356': "Crate Potion",
+				'2359': "Warmth Potion",
+				'2674': "Apprentice Bait",
+				'2675': "Journeyman Bait",
+				'2676': "Master Bait",
+				'2756': "Gender Change Potion",
+				'2997': "Wormhole Potion",
+				'3203': "Corrupt Crate",
+				'3204': "Crimson Crate",
+				'3205': "Dungeon Crate",
+				'3206': "Sky Crate",
+				'3207': "Hallowed Crate",
+				'3208': "Jungle Crate",
+				'3261': "Spectre Bar",
+				'3467': "Luminite Bar",
+				'3544': "Super Healing Potion",
+				// Plus a bunch of hand-picked items:
+				'64': "Vilethorn",
+				'65': "Starfury",
+				'96': "Musket",
+				'111': "Band of Starpower",
+				'115': "Shadow Orb",
+				'158': "Lucky Horseshoe",
+				'159': "Shiny Red Balloon",
+				'162': "Ball O' Hurt",
+				'211': "Feral Claws",
+				'212': "Anklet of the Wind",
+				'213': "Staff of Regrowth",
+				'285': "Aglet",
+				'502': "Crystal Shard",
+				'520': "Soul of Light",
+				'521': "Soul of Night",
+				'522': "Cursed Flame",
+				'800': "The Undertaker",
+				'802': "The Rotted Fork",
+				'946': "Umbrella",
+				'953': "Climbing Claws",
+				'964': "Boomstick",
+				'997': "Extractinator",
+				'1256': "Crimson Rod",
+				'1290': "Panic Necklace",
+				'1332': "Ichor",
+				'2292': "Fiberglass Fishing Pole",
+				'2424': "Anchor",
+				'2491': "Hardy Saddle",
+				'2501': "Ginger Beard",
+				'2587': "Tartar Sauce",
+				'2608': "Falcon Blade",
+				'3062': "Crimson Heart",
+				'3064': "Enchanted Sundial",
+				'3068': "Guide to Plant Fiber Cordage",
+				'3084': "Radar",
+				'3085': "Golden Lock Box",
+				'3200': "Sailfish Boots",
+				'3201': "Tsunami in a Bottle",
+			};
+
+			function common_extra_crate_open_code(hardmode, crate_type) {
+				var items = [];
+				while (items.length === 0) {
+					if (crate_type === 'corrupt' && chance(1, 6) && items.length === 0) items.push(loot([162, 111, 96, 115, 64], 1));
+					if (crate_type === 'crimson' && chance(1, 6) && items.length === 0) items.push(loot([800, 802, 1256, 1290, 3062], 1));
+					if (crate_type === 'dungeon' && chance(1, 6) && items.length === 0) items.push(loot([3085], 1));
+					if (crate_type === 'sky'     && chance(1, 6) && items.length === 0) items.push(loot([158, 65, 159], 1));
+					if (crate_type === 'jungle'  && chance(1, 6) && items.length === 0) items.push(loot([212, 964, 211, 213, 2292], 1));
+					if (chance(1, 4)) items.push(loot([73], rand(5, 13)));
+					if (chance(1, 4)) {
+						var tmp = loot([22, 21, 19, 704, 705, 706], rand(10, 21));
+						if (chance(2, 3) && hardmode) {
+							tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(10, 21));
+							tmp.qty -= rand(3);
+						}
+						items.push(tmp);
+					}
+				}
+				if (chance(1, 4)) items.push(loot([288, 296, 304, 305, 2322, 2323], rand(2, 5)));
+				if (chance(1, 2)) items.push(loot([188, 189], rand(5, 18)));
+				if (chance(1, 2)) items.push(loot([2676, 2675], rand(2, 7)));
+				if (hardmode) {
+					if (crate_type === 'corrupt') {
+						if (chance(1, 2)) items.push(loot([521], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([522], rand(2, 6)));
+					}
+					if (crate_type === 'crimson') {
+						if (chance(1, 2)) items.push(loot([521], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([1332], rand(2, 6)));
+					}
+					if (crate_type === 'hallowed') {
+						if (chance(1, 2)) items.push(loot([520], rand(2, 6)));
+						if (chance(1, 2)) items.push(loot([502], rand(4, 11)));
+					}
+				}
+				return items;
+			}
+
+			var CRATES = [
+				{
+					'name': 'Wooden Crate',
+					'itemid': 2334,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 200) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1,  40) && items.length === 0             ) items.push(loot([3200], 1));
+							if (chance(1,  40) && items.length === 0             ) items.push(loot([3201], 1));
+							if (chance(1,  25) && items.length === 0 &&  hardmode) items.push(loot([2424], 1));
+							if (chance(1,  45)                                   ) items.push(loot([285, 953, 946, 3068, 3084], 1));
+							if (chance(1,  50) && items.length === 0 && !hardmode) items.push(loot([997], 1));
+							if (chance(1,   7)) {
+								switch(rand(3)) {
+									case 0:
+										items.push(loot([73], rand(1, 6))); break;
+									case 1:
+									case 2:
+										items.push(loot([72], rand(20, 91))); break;
+								}
+							}
+							if (chance(1,   7)) {
+								var tmp = loot([12, 11, 14, 13, 699, 700, 701, 702], rand(8, 21));
+								if (chance(1, 2) && hardmode) {
+									tmp = loot([364, 365, 366, 1104, 1105, 1106], rand(8, 21));
+								}
+								items.push(tmp);
+							}
+							if (chance(1,   8)) {
+								var tmp = loot([20, 22, 21, 19, 703, 704, 705, 706], rand(2, 8));
+								if (chance(1, 2) && hardmode) {
+									tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(2, 8));
+									tmp.qty -= rand(2);
+								}
+								items.push(tmp);
+							}
+							if (chance(1,   7)) items.push(loot([288, 290, 292, 299, 298, 304, 291, 2322, 2323, 2329], rand(1, 4)));
+						}
+						if (chance(1, 3)) items.push(loot([28, 110], rand(5, 16)));
+						if (chance(1, 3)) items.push(loot([2675, 2674], rand(1, 5)));
+						return items;
+					}
+				},
+				{
+					'name': 'Iron Crate',
+					'itemid': 2335,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 60) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1, 25) && items.length === 0             ) items.push(loot([2501], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([2587], 1));
+							if (chance(1, 15) && items.length === 0             ) items.push(loot([2608], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([3200], 1));
+							if (chance(1, 20) && items.length === 0             ) items.push(loot([3201], 1));
+							if (chance(1,  4)) items.push(loot([73], rand(5, 11)));
+							if (chance(1,  4)) {
+								var tmp = loot([20, 22, 21, 19, 703, 704, 705, 706], rand(6, 15));
+								if (chance(2, 3) && hardmode) {
+									tmp = loot([381, 382, 391, 1184, 1191, 1198], rand(6, 15));
+									tmp.qty -= rand(2);
+								}
+								items.push(tmp);
+							}
+							if (chance(1,  4)) items.push(loot([288, 296, 304, 305, 2322, 2323, 2324, 2327], rand(2, 5)));
+						}
+						if (chance(1, 2)) items.push(loot([188, 189], rand(5, 16)));
+						if (chance(1, 2)) items.push(loot([2676, 2675, 2675], rand(2, 5)));
+						return items;
+					}
+				},
+				{
+					'name': 'Golden Crate',
+					'itemid': 2336,
+					'open': function(hardmode) {
+						var items = [];
+						while (items.length === 0) {
+							if (chance(1, 20) && items.length === 0 &&  hardmode) items.push(loot([3064], 1));
+							if (chance(1, 10) && items.length === 0             ) items.push(loot([2491], 1));
+							if (chance(1,  3)) items.push(loot([73], rand(8, 21)));
+							if (chance(1,  3)) {
+								var tmp = loot([21, 19, 705, 706], rand(15, 31));
+								if (chance(2, 3) && hardmode) {
+									tmp = loot([382, 391, 1191, 1198], rand(15, 31));
+								}
+								items.push(tmp);
+							}
+							if (chance(1,  3)) items.push(loot([288, 296, 305, 2322, 2323], rand(2, 6)));
+						}
+						if (chance(1, 2)) items.push(loot([499, 500], rand(5, 21)));
+						if (chance(2, 3)) items.push(loot([2676], rand(3, 8)));
+						return items;
+					}
+				},
+				{
+					'name': 'Corrupt Crate',
+					'itemid': 3203,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'corrupt');
+					}
+				},
+				{
+					'name': 'Crimson Crate',
+					'itemid': 3204,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'crimson');
+					}
+				},
+				{
+					'name': 'Dungeon Crate',
+					'itemid': 3205,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'dungeon');
+					}
+				},
+				{
+					'name': 'Jungle Crate',
+					'itemid': 3208,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'jungle');
+					}
+				},
+				{
+					'name': 'Sky Crate',
+					'itemid': 3206,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'sky');
+					}
+				},
+				{
+					'name': 'Hallowed Crate',
+					'itemid': 3207,
+					'open': function(hardmode) {
+						return common_extra_crate_open_code(hardmode, 'hallowed');
+					}
+				}
+			];
+
+			//////////////////////////////////////////////////
+			// Simulation.
+
+			function simulate(opts) {
+				if (opts.crate_counts.length !== CRATES.length) {
+					throw 'simulate() crate_counts parameter has a different length than CRATES Array.';
+				}
+
+				var list_of_lists_of_items = [];
+				CRATES.forEach(function(crate, index) {
+					for (var i = 0; i < opts.crate_counts[index]; i++) {
+						list_of_lists_of_items.push(CRATES[index].open(opts.is_hardmode));
+					}
+				});
+
+				return stack_items(list_of_lists_of_items);
+			}
+
+			//////////////////////////////////////////////////
+			// UI.
+
+			function create_crate_input(crate_id, name) {
+				var template = document.getElementById('crate_input_template');
+				var row = document.importNode(template.content, true);
+				var input = row.querySelector('input');
+				input.id = crate_id;
+				var span = row.querySelector('span');
+				span.textContent = name;
+				return row;
+			}
+
+			function read_inputs() {
+				var crate_counts = [];
+				CRATES.forEach(function(crate, index) {
+					crate_counts[index] = parseInt(document.getElementById('crate' + index).value, 10) || 0;
+				});
+				return {
+					'crate_counts': crate_counts,
+					'is_hardmode': document.getElementById('hardmode_input').checked,
+				};
+			}
+
+			function build_output(stuff) {
+				var data = [];
+				stuff.forEach(function(item, index) {
+					data.push({
+						'min' : item.qty,
+						'avg' : item.qty,
+						'max' : item.qty,
+						'sd'  : item.qty,
+						'name': ITEM_ID[item.id],
+						'id'  : item.id,
+					});
+				});
+
+				// It would be nice if search/sorting would be kept applied
+				// correctly even after modifying the list. Well, since
+				// that's not the case, I'm working around it here.
+
+				// Saving sorting state.
+				var sort_elem = document.querySelector('.output_section .sort.asc') || document.querySelector('#results-table .sort.desc');
+				var sort_column = null;
+				var sort_order = null;
+				if (sort_elem) {
+					sort_column = sort_elem.dataset.sort;
+					sort_order = sort_elem.classList.contains('asc') ? 'asc' : 'desc';
+				}
+
+				// Saving search state.
+				var search_text = document.querySelector('.output_section input.search').value;
+
+				// Updating the list.
+				g_results_list.clear();
+				g_results_list.add(data);
+
+				// Re-searching.
+				if (search_text) {
+					// Note: searching will reset the sorting.
+					g_results_list.search(search_text);
+				}
+
+				// Re-sorting.
+				// Sorting gets lost whenever the list is modified.
+				if (sort_column) {
+					g_results_list.sort(sort_column, {'order': sort_order});
+				}
+			}
+
+			function form_submit_handler(ev) {
+				ev.preventDefault();
+				ev.stopPropagation();
+
+				var opts = read_inputs();
+				var stuff = simulate(opts);
+				build_output(stuff);
+			}
+
+			function init() {
+				var input_form = document.getElementById('input_form');
+				input_form.addEventListener('submit', form_submit_handler);
+
+				var crate_input_block = document.getElementById('crate_input_block');
+				CRATES.forEach(function(crate, index) {
+					var row = create_crate_input('crate' + index, crate.name);
+					crate_input_block.appendChild(row);
+				});
+
+				g_results_list = new List(document.querySelector('.output_section'), {
+					'valueNames': ['min', 'avg', 'max', 'sd', 'name', 'id'],
+					'page': 5000,
+				});
+				g_results_list.clear();
+			}
+
+			var g_results_list;
+			window.addEventListener('load', init);
+		</script>
+	</body>
+</html>
