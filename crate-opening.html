@@ -27,8 +27,8 @@
 			body > section.output_section {
 				flex: 1 1 0;
 				flex: 1 1 content;
-				min-width: 40em;
-				max-width: 60em;
+				min-width: 45em;
+				max-width: 65em;
 			}
 			label {
 				display: block;
@@ -146,6 +146,7 @@
 						<th class="sort iqr"      data-sort="iqr"  title="Interquartile range, AKA Q₃ − Q₁">IQR</th>
 						<th class="sort mean"     data-sort="mean" title="Mean, AKA average">Mean</th>
 						<th class="sort sd"       data-sort="sd"   title="Standard deviation">SD</th>
+						<th class="sort max"      data-sort="max"  title="Maximum outcome from the simulations">Max</th>
 						<th class="sort name asc" data-sort="name">Item</th>
 						<th class="sort id"       data-sort="id"  >id</th>
 					</tr>
@@ -158,6 +159,7 @@
 						<td class="iqr" ></td>
 						<td class="mean"></td>
 						<td class="sd"  ></td>
+						<td class="max" ></td>
 						<td class="name"></td>
 						<td class="id"  ></td>
 					</tr>
@@ -616,6 +618,12 @@
 				return Math.sqrt(variance(samples, mean));
 			}
 
+			function max(samples) {
+				return samples.reduce(function(a, b) {
+					return Math.max(a, b);
+				}, 0);
+			}
+
 			//////////////////////////////////////////////////
 			// Simulation.
 
@@ -676,6 +684,7 @@
 						'q2': quartile(population, 2),
 						'q3': quartile(population, 3),
 						'mean': mean(population),
+						'max': max(population),
 					};
 					result.iqr = result.q3 - result.q1;
 					result.sd = std_dev(population, result.mean);
